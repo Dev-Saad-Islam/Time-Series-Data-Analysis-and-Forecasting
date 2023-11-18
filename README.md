@@ -1,10 +1,8 @@
 # Time-Series-Data-Analysis-and-Forecasting:
 
 
-● Conducted exploratory data analysis (EDA) on time series data to identify underlying patterns.
+This study delves into the comparison of various forecasting models using a specific time series dataset. To determine the most accurate model, it evaluated RMSE, MAE, sMape, and AIC scores alongside naive and seasonal naive models as benchmarks.
 
-● Developed multiple candidate models, including ARIMA, Linear Regression, Exponential Smoothing, 
-and Neural Networks, both manually and automatically, which were evaluated and compared against 
-benchmark models (naive and seasonal naive) using error metrics such as RMSE, MAE, and SMAPE.
+The comparison involved neural network and ARIMA models for predicting 14 future values. The best-performing models were ARIMA(2,0,1)(0,1,1)[7] and NNAR(10,15) with specific configurations. Plots were utilized to illustrate the expected values.
 
-● Utilized the best-performing models to accurately predict two weeks of future data.
+The report highlights that the accuracy of these projections may vary based on future pattern modifications or adjustments.
