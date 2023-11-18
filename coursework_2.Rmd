@@ -1,0 +1,976 @@
+---
+title: "forecasting CW-2"
+author: '36335776'
+date: "2023-04-14"
+output: pdf_document
+---
+
+
+```{r}
+library(forecast)
+library(smooth)
+library(tsutils)
+library(dplyr)
+library(zoo)
+library(patchwork)
+library(gridExtra)
+library(ggplot2)
+library(plotly)
+```
+
+# Loading Files
+```{r}
+
+test <- read.csv(file = 'test.csv')
+
+
+# convert date column to POSIXct format
+test <- test %>%
+  mutate(Date = as.POSIXct(Date, format = "%Y-%m-%d"))
+
+```
+
+# Loading Data
+```{r}
+
+test.ts <- ts(test$NN5.033,frequency = 365)
+
+```
+
+# Filling missing values
+```{r}
+
+clean_data <- na.spline(test.ts)
+
+table(is.na(test))
+```
+# Checking for 0 values and ofsetting them:
+
+```{r}
+any(clean_data == 0)
+
+# adding 0.1 to offset the 0 values as cant remove them:
+clean_data <- clean_data+0.1
+
+any(clean_data == 0)
+```
+
+#  plotting the time series
+
+```{r}
+plot_ly(x = time(clean_data), y = clean_data, type = "scatter", mode = "lines", name = "Actual")
+
+```
+
+```{r}
+
+decomp_test_clean_data <- decomp(clean_data, decomposition="additive", outplot=TRUE)
+
+```
+
+@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+
+# Splitting the Series
+```{r}
+# Train-Validation-Test Split
+trainSize <- ceiling(0.8 * length(clean_data))
+
+train <- ts(clean_data[(1:trainSize)], frequency = 365)
+end(train)
+
+
+test <- ts(clean_data[(trainSize+1):length(clean_data)], frequency = 365, start =end(train))
+
+```
+```{r}
+# Convert to plotly
+ggplotly(
+  autoplot(train,series= "TRAIN") +
+  autolayer(test, series = "TEST") +
+  labs(title = "Train - Test ", x='',y = " NN5.033")+
+  scale_color_manual(values = c("lightgreen", "orange"))
+)
+```
+
+
+@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+
+# Error matric functions:
+
+## sMape:
+```{r}
+sMAPE <- function(actual, predicted) {
+  n <- length(actual)
+  sMAPE <- sum(abs(actual - predicted) / (abs(actual) + abs(predicted))) * 200 / n
+  return(sMAPE)
+}
+```
+
+
+## MDRAE:
+```{r}
+# Median relative absolute error
+MdRAE <- function(actual, predicted, benchmark) {
+  MdRAE <- median(abs(actual - predicted) / abs(actual - benchmark))
+  return(MdRAE)
+}
+
+```
+
+@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+
+# All Best Models data frame:
+
+```{r}
+all_models <- data.frame(
+  Model_Name = character(),
+  RMSE = numeric(),
+  MAE = numeric(),
+  sMAPE = numeric(),
+  stringsAsFactors = FALSE
+)
+```
+
+@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+
+# Naive Models:
+
+## Naive
+
+```{r}
+
+Naive_Model <- naive(train, h = length(test))
+Naive_Model_forecast <- Naive_Model$mean
+checkresiduals(Naive_Model)
+
+```
+## plotting naive forecast
+```{r}
+plot_ly(x = time(clean_data), y = clean_data, type = "scatter", mode = "lines", name = "Actual",
+        line = list(color = "lightblue")) %>%
+  add_trace(x = time(Naive_Model_forecast), y = Naive_Model_forecast, type = "scatter", mode = "lines", name = "Forecast",
+            line = list(color = "lightred")) %>%
+  layout(title = "Actual vs Forecast",
+         xaxis = list(title = "Naive Model"),
+         yaxis = list(title = "Values"))
+
+```
+
+
+## Seasonal Naive
+
+```{r}
+
+Seasonal_Naive_Model <- snaive(train, h = length(test))
+Seasonal_Naive_Model_forecast <- Seasonal_Naive_Model$mean
+checkresiduals(Seasonal_Naive_Model)
+
+```
+## plotting niave seasonal forecast
+
+```{r}
+plot_ly(x = time(clean_data), y = clean_data, type = "scatter", mode = "lines", name = "Actual",
+        line = list(color = "lightblue")) %>%
+  add_trace(x = time(Seasonal_Naive_Model_forecast), y = Seasonal_Naive_Model_forecast, type = "scatter", mode = "lines", name = "Forecast",
+            line = list(color = "lightred")) %>%
+  layout(title = "Actual vs Forecast",
+         xaxis = list(title = "Naive Seasonal Model"),
+         yaxis = list(title = "Values"))
+
+```
+
+```{r}
+accuracy(Naive_Model_forecast,test)
+accuracy(Seasonal_Naive_Model_forecast, test)
+sMAPE(test, Naive_Model_forecast)
+sMAPE(test, Seasonal_Naive_Model_forecast)
+
+```
+
+
+
+@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+# Exponential Smoothing Models:
+
+
+## Datafram to store ES Results:
+```{r}
+# Results ES Data Frame
+Results_ES <- data.frame(model = character(),
+                          alpha = numeric(),
+                          gamma = numeric(),
+                          RMSE = numeric(),
+                          MAE = numeric(),
+                          sMAPE = numeric(),
+                          stringsAsFactors = FALSE)
+```
+
+## Auto Exponential Smoothing Model:
+
+```{r}
+# training the auto model:
+auto_ESmodel <- es(train, model = "ZZZ")
+
+#Forecasting on auto model:
+auto_ESmodel_forecast <- forecast(auto_ESmodel, h = length(test))
+
+auto_es_results <- c("ZZZ", 0, 0, 
+                     accuracy(auto_ESmodel_forecast$mean, test)[2],
+                     accuracy(auto_ESmodel_forecast$mean, test)[3], 
+                      sMAPE(test, auto_ESmodel_forecast$mean))
+accuracy(auto_ESmodel_forecast$mean, test)
+#storing auto results
+Results_ES <- rbind(Results_ES, auto_es_results)
+
+#colunm name
+colnames(Results_ES) <- c("model",
+                          "alpha" ,
+                          "gamma" ,
+                          "RMSE",
+                          "MAE",
+                          "sMAPE")
+print(auto_ESmodel)
+```
+
+## Manual Exponential Smoothing Model:
+
+```{r}
+
+# Tuning Hyper Parameters
+alpha <- c(0, 0.25, 0.75, 1)
+gamma <- c(0, 0.25, 0.75, 1)
+model <- c("ANN", "ANA")
+
+# Looping them
+for (i in model) {
+  for (j in alpha) {
+      for (l in gamma) {
+        #Modelling:
+        model <- es(train, model=i, alpha=j, gamma=l)
+        #Forecasting:
+        ES_manual_forecasts <- forecast(model, h=length(test))
+        acc_metrics <- accuracy(ES_manual_forecasts$mean, test)
+        rmse <- acc_metrics[1, "RMSE"]
+        mae <- acc_metrics[1, "MAE"]
+        smape <- sMAPE(test, ES_manual_forecasts$mean)
+        
+        #adding results in data-frame
+
+        es_results <- c(i, j, l, rmse, mae, smape)
+        Results_ES <- rbind(Results_ES, es_results)
+      }
+  }
+}
+
+
+```
+
+## Best Manual Exponential Smoothing Model:
+
+```{r}
+Results_ES$RMSE <- as.numeric(Results_ES$RMSE)
+Results_ES$MAE <- as.numeric(Results_ES$MAE)
+Results_ES$sMAPE <- as.numeric(Results_ES$sMAPE)
+```
+
+
+```{r}
+plot_ly(
+  data = Results_ES %>% filter(alpha ==  0 & gamma == 0), x = ~model, 
+  y = ~RMSE, type = "bar", name = "RMSE") %>%
+  add_trace(y = ~sMAPE, name = "sMAPE") %>%
+  add_trace(y = ~MAE, name = "MAE") %>%
+  layout(barmode = "group", xaxis = list(title = "Models"),
+         yaxis = list(title = "Error"))
+
+```
+
+```{r}
+best_model_ES <- Results_ES[which.min(Results_ES$RMSE), ]
+cat("Best model ES:\n")
+print(best_model_ES)
+model_ES <- es(train, model=best_model_ES$model, 
+                      alpha=best_model_ES$alpha, 
+                      beta=best_model_ES$beta, 
+                      gamma=best_model_ES$gamma)
+
+# Make predictions on full dataset
+best_ES_forecast <- forecast(model_ES, h = length(test))
+
+# Calculate accuracy metrics for best model
+best_acc_metrics <- accuracy(best_ES_forecast$mean, test)
+cat("\nAccuracy Metrics for Best Model:\n")
+print(best_acc_metrics)
+
+
+# adding it to the all models data frame
+
+all_models <- rbind(all_models, 
+                    data.frame(Model_Name= 'ES_Best',
+                               RMSE = best_acc_metrics[1, "RMSE"], 
+                               MAE = best_acc_metrics[1, "MAE"],
+                               sMAPE = sMAPE(test, best_ES_forecast$mean)
+                               ))
+
+
+```
+### Best ES Model:
+
+```{r}
+
+plot_ly(x = time(clean_data), y = clean_data, type = "scatter", mode = "lines", name = "Actual",
+        line = list(color = "lightblue")) %>%
+  add_trace(x = time(best_ES_forecast$mean), y = best_ES_forecast$mean, type = "scatter", mode = "lines", name = "Forecast",
+            line = list(color = "lightred")) %>%
+  layout(title = "Actual vs Forecast",
+         xaxis = list(title = "Best ES Model"),
+         yaxis = list(title = ""))
+# Plot residuals
+checkresiduals(residuals(model_ES))
+```
+
+### Reseduals of Best ES:
+```{r}
+# Plot residuals
+checkresiduals(residuals(model_ES))
+
+# Perform Shapiro-Wilk test
+shapiro.test(residuals(model_ES))
+
+```
+
+## comparing best model with the naive models:
+
+```{r}
+MdRAE(test, best_ES_forecast$mean, Naive_Model_forecast)
+MdRAE(test, best_ES_forecast$mean, Seasonal_Naive_Model_forecast)
+```
+
+
+
+@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+
+# ARIMA Models:
+
+## Plotting ACF PACF:
+
+```{r}
+
+arima_f1_ts <- ts(clean_data,frequency = 1)
+ggtsdisplay(arima_f1_ts, main = "Daily Data")
+
+```
+
+## Train/Test split for Arima
+
+```{r}
+split <- ceiling(0.8 * length(clean_data))
+
+train_ar <- ts(clean_data[(1:split)], frequency = 7)
+end(train_ar)
+
+test_ar <- ts(clean_data[(split+1):length(clean_data)], frequency = 7, start = end(train_ar))
+
+```
+## making df to store values
+
+```{r}
+# Initialize data frame to store results
+results_ARIMA <- data.frame(matrix(ncol = 10, nrow = 0))
+
+colnames(results_ARIMA) <- c("p", "d", "q", "P", "D", "Q", "AIC", "RMSE", "MAE", "sMAPE")
+
+```
+
+## Auto Arima Modeling:
+
+```{r}
+#Model:
+auto_ar <- auto.arima(train_ar, seasonal = TRUE)
+```
+
+
+```{r}
+#Forecasting:
+ARIMA_auto_forecast <- forecast(auto_ar, h = length(test_ar))
+print(auto_ar)
+
+#getting error metrics and saving them
+accuracy(ARIMA_auto_forecast$mean, test_ar)
+
+aic <- AIC(auto_ar)
+smape <- sMAPE(test_ar, ARIMA_auto_forecast$mean)
+acc_metrics <- accuracy(ARIMA_auto_forecast$mean, test_ar)
+rmse <- acc_metrics[1, "RMSE"]
+mae <- acc_metrics[1, "MAE"]
+
+row <- c(1, 0, 0, 2, 1, 0, aic, rmse, mae, smape)
+
+results_ARIMA <- rbind(results_ARIMA, row)
+```
+
+## Manual 
+
+```{r}
+
+# hyper prarameter list:
+ps <- c(0, 1, 2)
+ds <- c(0, 1, 2)
+qs <- c(0, 1, 2)
+Ps <- c(0, 1, 2)
+Ds <- c(0, 1,2)
+Qs <- c(0, 1, 2)
+
+# looping the hyper parameters
+for (p in ps) {
+  for (d in ds) {
+    for (q in qs) {
+      for (P in Ps) {
+        for (D in Ds) {
+          for (Q in Qs) {
+            # Fit ARIMA model 
+            tryCatch({
+              model <- arima(train_ar, order = c(p, d, q), 
+                             seasonal = list(order = c(P, D, Q), period = 7))
+              
+              ARIMA_manual_forecasts <- forecast(model, h = length(test_ar))
+              # calculate accuracy measures
+              aic <- AIC(model)
+              smape <- sMAPE(test_ar, ARIMA_manual_forecasts$mean)
+              acc_metrics <- accuracy(ARIMA_manual_forecasts$mean, test_ar)
+              rmse <- acc_metrics[1, "RMSE"]
+              mae <- acc_metrics[1, "MAE"]
+              row <- c(p, d, q, P, D, Q, aic, rmse, mae, smape)
+              results_ARIMA <- rbind(results_ARIMA, row)
+            }, 
+            error = function(e) {
+              return()
+            })
+          }
+        }
+      }
+    }
+  }
+}
+
+```
+
+## Best Fit
+
+```{r}
+# Find best model based on RMSE
+best_model <- results_ARIMA[which.min(results_ARIMA$AIC), ]
+cat("Best model:\n")
+print(best_model)
+
+
+best_model_ARIMA <- arima(train_ar, order = c(best_model$p, 
+                                              best_model$d, 
+                                              best_model$q), 
+                          seasonal = list(order = c(best_model$P, 
+                                                    best_model$D, 
+                                                    best_model$Q),
+                                                    period = 7))
+
+ARIMA_best_forecasts <- forecast(best_model_ARIMA, h = length(test_ar))
+
+# Calculate accuracy metrics for best model
+best_ARIMA_metrics <- accuracy(ARIMA_best_forecasts$mean, test_ar)
+cat("\nAccuracy Metrics for Best Model:\n")
+print(best_ARIMA_metrics)
+
+
+# adding it to the all models data frame
+
+all_models <- rbind(all_models, 
+                    data.frame(Model_Name= 'ARIMA_BEST',
+                               RMSE = best_acc_metrics[1, "RMSE"], 
+                               MAE = best_acc_metrics[1, "MAE"],
+                               sMAPE = sMAPE(test_ar, ARIMA_best_forecasts$mean)))
+
+```
+## Resedual Analysis of the best ARIMA model:
+
+```{r}
+checkresiduals(best_model_ARIMA)
+checkresiduals(auto_ar)
+```
+## Plotting the ANN best model predictions:
+
+```{r}
+# Create a plotly figure
+fig <- plot_ly()
+
+# Add the training data to the figure
+fig <- fig %>% add_lines(x = ~index(train_ar), y = ~train_ar, name = "Training")
+
+# Add the test data to the figure
+fig <- fig %>% add_lines(x = ~index(test_ar), y = ~test_ar, name = "Test")
+
+# Add the predicted values to the figure
+fig <- fig %>% add_lines(x = ~index(ARIMA_best_forecasts$mean), y = ~ARIMA_best_forecasts$mean, name = "Predicted")
+
+# Customize the axis labels and title
+fig <- fig %>% layout(xaxis = list(title = ""), yaxis = list(title = "Value"), title = "Best ARIMA Model")
+
+# Display the plot
+fig
+```
+
+## comparing best model with the naive models:
+
+```{r}
+GMRAE(test_ar, ARIMA_best_forecasts$mean, Naive_Model_forecast)
+GMRAE(test_ar, ARIMA_best_forecasts$mean, Seasonal_Naive_Model_forecast)
+GMRAE(test_ar, ARIMA_auto_forecast$mean, Naive_Model_forecast)
+GMRAE(test_ar, ARIMA_auto_forecast$mean, Seasonal_Naive_Model_forecast)
+```
+
+
+
+@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+
+# Regression Models:
+
+## Datafram to store Regression(LM) Results:
+```{r}
+# Results ES Data Frame
+Results_lm <- data.frame(model = character(),
+                          RMSE = numeric(),
+                          MAE = numeric(),
+                          sMAPE = numeric(),
+                          stringsAsFactors = FALSE)
+```
+
+## Automation Linear Regression
+
+```{r}
+
+# independent variable using lags:
+lag <- as.vector(train) %>% lag(7) # taking 7 as we have weekly seasonality
+lag <- ts(lag, frequency = 365)
+
+# independent variables:
+dates <- seq(from = as.Date("1996-03-18"), length.out = length(train), by = 1)
+weeks <- weekdays(dates)
+months <- format(dates, "%m")
+
+```
+
+### New DF for auto:
+```{r}
+# creating a new data frame for LM
+
+auto_lm_Train <- data.frame(matrix(ncol = 4, nrow = length(train)))
+colnames(auto_lm_Train) <- c("train", "lag", "weeks", "months")
+
+auto_lm_Train$train <- as.numeric(train)
+auto_lm_Train$lag <- as.numeric(na.spline(lag)) 
+auto_lm_Train$weeks <- weeks  
+auto_lm_Train$months <- months 
+
+```
+
+### Modeling the auto lm model:
+
+```{r}
+
+auto_lm <- lm(train ~., data = auto_lm_Train)
+summary(auto_lm)
+checkresiduals(auto_lm)
+```
+
+## Predictions of auto lm model:
+
+```{r}
+
+prediction_lm_auto <- predict(auto_lm, n.ahead = length(test))
+
+prediction_lm_auto <- ts(prediction_lm_auto, frequency = frequency(test), start = start(test), end = end(test))
+
+smape <- sMAPE(as.numeric(test), prediction_lm_auto)
+acc_metrics <- accuracy(prediction_lm_auto,as.numeric(test))
+rmse <- acc_metrics[1, "RMSE"]
+mae <- acc_metrics[1, "MAE"]
+row <- c("Auto_lm", rmse, mae, smape)
+
+Results_lm <- rbind(Results_lm, row)
+
+colnames(Results_lm) <- c("Model","RMSE", "MAE", "sMAPE")
+
+```
+
+
+
+## Manual model
+
+
+### Forward selection
+```{r}
+# Null Model
+lm_0model <- lm(train ~ 1)
+add1(lm_0model, scope = train ~ lag + weeks + months, test = "F")
+```
+
+```{r}
+# Continuing the Forward Selection
+
+lm_1model <- lm(train ~ weeks)
+add1(lm_1model, scope = train ~ lag + weeks + months , test = "F")
+```
+
+```{r}
+# Continuing the Forward Selection
+lm_2model <- lm(train ~ weeks )
+add1(lm_2model, scope = train ~ lag + weeks + months + lag:weeks, test = "F")
+```
+
+```{r}
+# Continuing the Forward Selection
+
+lm_3model <- lm(train ~  weeks )
+add1(lm_3model, scope = train ~ lag + weeks + months + lag:months, test = "F")
+```
+
+### Final Manual Model
+```{r}
+# Final Model
+lm_final_Manual <- lm(train ~ weeks)
+
+prediction_lm_manual <-predict(lm_final_Manual,n.ahead=length(test))
+
+prediction_lm_manual <- ts(prediction_lm_manual, frequency = frequency(test), start = start(test), end = end(test))
+
+accuracy(prediction_lm_manual, test)
+
+
+smape <- sMAPE(as.numeric(test), prediction_lm_manual)
+acc_metrics <- accuracy(prediction_lm_manual,test)
+rmse <- acc_metrics[1, "RMSE"]
+mae <- acc_metrics[1, "MAE"]
+row <- c("Manual_lm", rmse, mae, smape)
+
+Results_lm <- rbind(Results_lm, row)
+
+colnames(Results_lm) <- c("Model","RMSE", "MAE", "sMAPE")
+
+all_models <- rbind(all_models, 
+                    data.frame(Model_Name= 'Lm_bestmodel',
+                               RMSE = rmse, 
+                               MAE = mae,
+                               sMAPE = smape))
+
+```
+
+## Plotting Best Model:
+
+```{r}
+
+# Convert the training data to a data frame
+train_df <- as.data.frame(train)
+
+# Create a plotly figure
+fig <- plot_ly()
+
+# Add the training data to the figure
+fig <- fig %>% add_lines(x = ~index(train), y = ~train, name = "Training", line = list(color = "lightblue", width = 3))
+
+# Add the predicted values to the figure
+fig <- fig %>% add_lines(x = ~index(prediction_lm_manual), y = ~prediction_lm_manual, name = "Prediction", line = list(color = "red"))
+
+# Customize the axis labels and title
+fig <- fig %>% layout(xaxis = list(title = ""), yaxis = list(title = "Values"), title = "Best LM Model")
+
+# Display the plot
+fig
+
+
+```
+
+## Reseduals of best lm model:
+ 
+```{r}
+checkresiduals(auto_lm)
+checkresiduals(lm_final_Manual)
+summary(lm_final_Manual)
+```
+
+## Benchmarking for best lm model:
+
+```{r}
+MdRAE(as.numeric(test), as.numeric(prediction_lm_manual), as.numeric(Naive_Model_forecast))
+MdRAE(as.numeric(test), as.numeric(prediction_lm_manual), as.numeric(Seasonal_Naive_Model_forecast))
+
+MdRAE(as.numeric(test), as.numeric(prediction_lm_auto), as.numeric(Naive_Model_forecast))
+MdRAE(as.numeric(test), as.numeric(prediction_lm_auto), as.numeric(Seasonal_Naive_Model_forecast))
+```
+
+@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+
+# Neural Netrowk model:
+
+## Auto NN Model :
+```{r}
+set.seed(7)
+auto_ann <-nnetar(train)
+print(ann1)
+
+auto_ann_forecast<-forecast(auto_ann,h=147)
+autoplot(auto_ann_forecast)
+
+accuracy(auto_ann_forecast,test)
+sMAPE(test, auto_ann_forecast$mean)
+
+```
+
+
+## Manual Ann Model :
+```{r}
+set.seed(7)
+
+# Set up hyperparameters to tune
+hidden_units <- c(1, 5, 10, 15)
+learning_rates <- c(0.001, 0.01, 0.1)
+momentums <- c(0, 0.2, 0.4, 0.6, 0.8, 0.9)
+activations <- c("logistic", "tanh", "relu")
+lags_range <- seq(10, 30, by = 5)
+decay_range <- c(0.1, 0.01, 0.001)
+
+# Initialize variables to hold the best hyperparameters and model performance
+best_lags <- 0
+best_decay <- 0
+best_rmse <- Inf
+
+# Create empty dataframe to store results
+results <- data.frame(
+  hidden_units = numeric(),
+  learning_rate = numeric(),
+  momentum = numeric(),
+  activation = character(),
+  RMSE = numeric(),
+  MAE = numeric(),
+  sMAPE = numeric(),
+  MASE = numeric(),
+  stringsAsFactors = FALSE
+)
+
+# Loop through hyperparameters and fit models
+for (lags in lags_range) {
+  for (decay in decay_range) {
+    for (hu in hidden_units) {
+      for (lr in learning_rates) {
+        for (mom in momentums) {
+          for (act in activations) {
+            # Fit model with current hyperparameters
+            ann <- nnetar(train, size = hu, maxit = 1000, linout = TRUE, 
+                          learningrate = lr, momentum = mom, 
+                          act.fct = act,p = lags, P = 12, 
+                          decay = decay, skip = TRUE)
+            # Make predictions on test set
+            forecast_ann <- forecast(ann, h = length(test))
+            # Calculate accuracy metrics
+            
+            acc_metrics <- accuracy(forecast_ann, test)
+            rmse <- acc_metrics[1, "RMSE"]
+            mae <- acc_metrics[1, "MAE"]
+            mase <- acc_metrics[1, "MASE"]
+            smape <- sMAPE(test, forecast_ann$mean)
+            # Store results in data-frame
+            results <- rbind(results, 
+                             data.frame(hidden_units = hu, learning_rate = lr, 
+                                        momentum = mom, activation = act,
+                                        RMSE = rmse, MAE = mae,MASE = mase, sMAPE = smape))
+            # Update the best hyperparameters if the current model is better
+            if (rmse < best_rmse) {
+              best_lags <- lags
+              best_decay <- decay
+              best_rmse <- rmse
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+```
+
+## Getting the best model:
+```{r}
+set.seed(7)
+
+# Find best model based on RMSE
+best_model <- results[which.min(results$RMSE), ]
+cat("Best model:\n")
+print(best_model)
+
+# Fit best model on full dataset
+best_ann <- nnetar(train, size = best_model$hidden_units, maxit = 1000, linout = TRUE, 
+                   learningrate = best_model$learning_rate, momentum = best_model$momentum, 
+                   act.fct = best_model$activation, 
+                   p = best_lags, 
+                   P = 12, 
+                   decay = best_decay,
+                   skip = TRUE)
+print(best_ann)
+# Make predictions on full dataset
+best_ann_forecast <- forecast(best_ann, h = length(test))
+
+
+# Calculate accuracy metrics for best model
+best_acc_metrics <- accuracy(best_ann_forecast, test)
+cat("\nAccuracy Metrics for Best Model:\n")
+print(best_acc_metrics)
+
+
+# adding it to the all models data frame
+
+all_models <- rbind(all_models, 
+                    data.frame(Model_Name= 'Neural_Network_Manual',
+                               RMSE = best_acc_metrics[1, "RMSE"], 
+                               MAE = best_acc_metrics[1, "MAE"],
+                               sMAPE = sMAPE(test, best_ann_forecast$mean)))
+
+```
+
+## Resedual Analysis of the best ANN Model:
+
+```{r}
+# Plot residuals
+checkresiduals(residuals(auto_ann))
+checkresiduals(residuals(best_ann))
+
+```
+```{r}
+
+# Create a plotly figure
+fig <- plot_ly()
+
+# Add the training data to the figure
+fig <- fig %>% add_lines(x = ~index(train), y = ~train, name = "Training")
+
+# Add the test data to the figure
+fig <- fig %>% add_lines(x = ~index(test), y = ~test, name = "Test")
+
+# Add the predicted values to the figure
+fig <- fig %>% add_lines(x = ~index(best_ann_forecast$mean), y = ~best_ann_forecast$mean, name = "Predicted")
+
+# Customize the axis labels and title
+fig <- fig %>% layout(xaxis = list(title = ""), yaxis = list(title = "Value"), title = "Best Neural Network Model")
+
+# Display the plot
+fig
+
+```
+
+## Plotting the ANN best model predictions:
+
+```{r}
+# Create a plotly figure
+fig <- plot_ly()
+
+# Add the training data to the figure
+fig <- fig %>% add_lines(x = ~index(train), y = ~train, name = "Training")
+
+# Add the test data to the figure
+fig <- fig %>% add_lines(x = ~index(test), y = ~test, name = "Test")
+
+# Add the predicted values to the figure
+fig <- fig %>% add_lines(x = ~index(auto_ann_forecast$mean), y = ~auto_ann_forecast$mean, name = "Predicted")
+
+# Customize the axis labels and title
+fig <- fig %>% layout(xaxis = list(title = ""), yaxis = list(title = "Value"), title = "Best Neural Network Model")
+
+# Display the plot
+fig
+
+```
+
+## Benchmarking for best lm model:
+
+```{r}
+MdRAE(as.numeric(test), as.numeric(best_ann_forecast$mean), as.numeric(Naive_Model_forecast))
+MdRAE(as.numeric(test), as.numeric(best_ann_forecast$mean), as.numeric(Seasonal_Naive_Model_forecast))
+
+MdRAE(as.numeric(test), as.numeric(auto_ann_forecast$mean), as.numeric(Naive_Model_forecast))
+MdRAE(as.numeric(test), as.numeric(auto_ann_forecast$mean), as.numeric(Seasonal_Naive_Model_forecast))
+```
+
+# Preding Final models:
+## Arima modeling:
+```{r}
+data_arima <- ts(clean_data, frequency = 7)
+Final_model_ARIMA <- arima(data_arima, order = c(2,0,1), 
+                          seasonal = list(order = c(0,1,1),
+                                                    period = 7))
+
+```
+
+## Forecasting Arima:
+```{r}
+ARIMA_auto_forecast <- forecast(Final_model_ARIMA, h = 14)
+print(ARIMA_auto_forecast$mean)
+```
+
+## Final Arima Plot:
+
+```{r}
+# Create a plotly figure
+fig <- plot_ly()
+
+# Add the  data to the figure
+fig <- fig %>% add_lines(x = ~index(data_arima), y = ~data_arima, name = "Data")
+
+
+# Add the predicted values to the figure
+fig <- fig %>% add_lines(x = ~index(ARIMA_auto_forecast$mean), y = ~ARIMA_auto_forecast$mean, name = "Predicted")
+
+# Customize the axis labels and title
+fig <- fig %>% layout(xaxis = list(title = ""), yaxis = list(title = "Value"), title = "ARIMA prediction")
+
+# Display the plot
+fig
+```
+
+## Neural Network modeling:
+```{r}
+# Fit best model on full dataset
+Final_model_nn <- nnetar(clean_data, size = 15, maxit = 1000, linout = TRUE, 
+                   learningrate = 0.01, momentum = 0.4, 
+                   act.fct = "tanh", 
+                   p = 10, 
+                   P = 12, 
+                   decay = 0.01,
+                   skip = TRUE)
+```
+
+## Forecasting Neural Network:
+```{r}
+NN_auto_forecast <- forecast(Final_model_nn, h = 14)
+print(NN_auto_forecast$mean)
+
+```
+
+## Final Neural Network Plot:
+
+```{r}
+# Create a plotly figure
+fig <- plot_ly()
+
+# Add the  data to the figure
+fig <- fig %>% add_lines(x = ~index(clean_data), y = ~clean_data, name = "Data")
+
+
+# Add the predicted values to the figure
+fig <- fig %>% add_lines(x = ~index(NN_auto_forecast$mean), y = ~NN_auto_forecast$mean, name = "Predicted")
+
+# Customize the axis labels and title
+fig <- fig %>% layout(xaxis = list(title = ""), yaxis = list(title = "Value"), title = "Neural Network prediction")
+
+# Display the plot
+fig
+```
+
+
+
+
